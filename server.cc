@@ -35,20 +35,20 @@ int main(int argc, char** argv) {
         return -1;
     }
     printf("info: listening for incoming connections.....\n");
-    
-    while (1) {
-        char *msg_a = new char[80];
-        char *msg_b = new char[80];
-        char *msg_c = new char[80];
-        struct iovec iov[3];
-        ssize_t nr;
 
-        iov[0].iov_base = msg_a;
-        iov[0].iov_len = 80;
-        iov[1].iov_base = msg_b;
-        iov[1].iov_len = 80;
-        iov[2].iov_base = msg_c;
-        iov[2].iov_len = 80;
+    while (1) {
+        // need to recieve shape metadata here
+        int64_t num_cols = 3;
+        int64_t num_rows = 10;
+        std::vector<int> total_bytes{80, 80, 80};
+        std::vector<int> null_count{0, 0, 0};
+        std::vector<int> length{10, 10, 10};
+
+        struct iovec* iov = new struct iovec[num_cols];
+        for (int64_t i = 0; i < num_cols; i++) {
+            iov[i].iov_base = new char[total_bytes[i]];
+            iov[i].iov_len = total_bytes[i];
+        }
 
         client_size = sizeof(client_addr);
         client_sock = accept(socket_desc, (struct sockaddr*)&client_addr, &client_size);
@@ -59,19 +59,18 @@ int main(int argc, char** argv) {
         }
         printf("info: client connected at IP: %s and port: %i\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-        nr = readv(client_sock, iov, 3);
+        ssize_t nr = readv(client_sock, iov, 3);
         if (nr == -1) {
             perror("error: readv failed");
             return 1;
         }
 
-        std::vector<std::shared_ptr<arrow::ChunkedArray>> cols(3);
-
-        for (int i = 0; i < 3; i++) {
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> cols(num_cols);
+        for (int i = 0; i < num_cols; i++) {
             std::vector<std::shared_ptr<arrow::Buffer>> buffers;
             buffers.push_back(nullptr);
-            buffers.push_back(std::make_shared<arrow::Buffer>((uint8_t*)iov[i].iov_base, 80));
-            auto data = arrow::ArrayData::Make(arrow::int64(), 10, std::move(buffers), 0);
+            buffers.push_back(std::make_shared<arrow::Buffer>((uint8_t*)iov[i].iov_base, total_bytes[i]));
+            auto data = arrow::ArrayData::Make(arrow::int64(), length[i], std::move(buffers), null_count[i]);
             auto col = std::make_shared<arrow::ChunkedArray>(arrow::MakeArray(data));
             cols[i] = col;
         }
@@ -83,7 +82,7 @@ int main(int argc, char** argv) {
                 arrow::field("c", arrow::int64())
             }), 
             std::move(cols), 
-            10
+            num_rows
         );
 
         std::cout << table->ToString();
