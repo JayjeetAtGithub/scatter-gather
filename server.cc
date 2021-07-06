@@ -1,10 +1,12 @@
 #include <stdio.h>
+#include <iostream>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <sys/uio.h>
 
+#include <arrow/api.h>
 
 int main(int argc, char** argv) {
     int socket_desc, client_sock;
@@ -35,18 +37,18 @@ int main(int argc, char** argv) {
     printf("info: listening for incoming connections.....\n");
     
     while (1) {
-        char *msg_a = new char[5];
-        char *msg_b = new char[4];
-        char *msg_c = new char[3];
+        char *msg_a = new char[80];
+        char *msg_b = new char[80];
+        char *msg_c = new char[80];
         struct iovec iov[3];
         ssize_t nr;
 
         iov[0].iov_base = msg_a;
-        iov[0].iov_len = 5;
+        iov[0].iov_len = 80;
         iov[1].iov_base = msg_b;
-        iov[1].iov_len = 4;
+        iov[1].iov_len = 80;
         iov[2].iov_base = msg_c;
-        iov[2].iov_len = 3;
+        iov[2].iov_len = 80;
 
         client_size = sizeof(client_addr);
         client_sock = accept(socket_desc, (struct sockaddr*)&client_addr, &client_size);
@@ -63,9 +65,28 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> cols(3);
+
         for (int i = 0; i < 3; i++) {
-            printf ("\n%d: %s\n", i, (char *) iov[i].iov_base);
+            std::vector<std::shared_ptr<arrow::Buffer>> buffers;
+            buffers.push_back(nullptr);
+            buffers.push_back(std::make_shared<arrow::Buffer>((uint8_t*)iov[i].iov_base, 80));
+            auto data = arrow::ArrayData::Make(arrow::int64(), 10, std::move(buffers), 0);
+            auto col = std::make_shared<arrow::ChunkedArray>(arrow::MakeArray(data));
+            cols[i] = col;
         }
+
+        auto table = arrow::Table::Make(
+            arrow::schema({
+                arrow::field("a", arrow::int64()), 
+                arrow::field("b", arrow::int64()),
+                arrow::field("c", arrow::int64())
+            }), 
+            std::move(cols), 
+            10
+        );
+
+        std::cout << table->ToString();
     }
     
     close(client_sock);
