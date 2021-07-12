@@ -44,10 +44,9 @@ int main(int argc, char** argv) {
         std::vector<int> null_count{0, 0, 0};
         std::vector<int> length{10, 10, 10};
 
-        struct iovec* iov = new struct iovec[num_cols];
+        std::vector<char*> column_buffers(num_cols);
         for (int64_t i = 0; i < num_cols; i++) {
-            iov[i].iov_base = new char[total_bytes[i]];
-            iov[i].iov_len = total_bytes[i];
+            column_buffers[i] = new char[total_bytes[i]];
         }
 
         client_size = sizeof(client_addr);
@@ -59,17 +58,19 @@ int main(int argc, char** argv) {
         }
         printf("info: client connected at IP: %s and port: %i\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-        ssize_t nr = readv(client_sock, iov, 3);
-        if (nr == -1) {
-            perror("error: readv failed");
-            return 1;
+        for (int64_t i = 0; i < num_cols; i++) {
+            int e = recv(client_sock, column_buffers[i], total_bytes[i], 0);
+            if (e == -1) {
+                perror("error: readv failed");
+                return 1;
+            }
         }
 
         std::vector<std::shared_ptr<arrow::ChunkedArray>> cols(num_cols);
         for (int i = 0; i < num_cols; i++) {
             std::vector<std::shared_ptr<arrow::Buffer>> buffers;
             buffers.push_back(nullptr);
-            buffers.push_back(std::make_shared<arrow::Buffer>((uint8_t*)iov[i].iov_base, total_bytes[i]));
+            buffers.push_back(std::make_shared<arrow::Buffer>((uint8_t*)column_buffers[i], total_bytes[i]));
             auto data = arrow::ArrayData::Make(arrow::int64(), length[i], std::move(buffers), null_count[i]);
             auto col = std::make_shared<arrow::ChunkedArray>(arrow::MakeArray(data));
             cols[i] = col;

@@ -40,8 +40,7 @@ std::shared_ptr<arrow::Table> CreateTable() {
   return arrow::Table::Make(schema, {array_a, array_b, array_c});
 }
 
-iovec* CreateIOVec(std::shared_ptr<arrow::Table> table) {
-    struct iovec *iov = new struct iovec[3];
+int SendBuffers(std::shared_ptr<arrow::Table> table, int fd) {
     int64_t num_cols = table->num_columns();
     for (int64_t i = 0; i < num_cols; i++) {
         /// Ensure that the table has a single record batch
@@ -49,12 +48,15 @@ iovec* CreateIOVec(std::shared_ptr<arrow::Table> table) {
         for (int j = 0; j < data->buffers.size(); j++) {
             if (data->buffers[j] != NULL) {
                 std::cout << data->buffers[j]->size() << "\n"; 
-                iov[i].iov_base = data->buffers[j]->mutable_data();
-                iov[i].iov_len = data->buffers[j]->size();
+                int e = send(fd, data->buffers[j]->mutable_data(), data->buffers[j]->size(), 0);
+                if (e == -1) {
+                    perror("error: failed to send buffer");
+                    return 1;
+                }
             }
         }
     }
-    return iov;
+    return 0;
 }
 
 int main(int argc, char **argv) {
@@ -79,15 +81,13 @@ int main(int argc, char **argv) {
 
     auto table = CreateTable();
     std::cout << table->ToString() << "\n";
-    struct iovec* iov = CreateIOVec(table);
 
-    ssize_t nr = writev (fd, iov, 3);
-    if (nr == -1) {
-        perror("error: call to writev failed");
-        return 1;
+    int e = SendBuffers(table, fd);
+    if (e == -1) {
+        perror("error: failed to send table\n");
+    } else {
+        printf("info: sent table\n");
     }
-
-    printf("info: wrote %ld bytes\n", nr);
 
     if (close(fd)) {
         perror("info: close");
